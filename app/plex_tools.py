@@ -22,6 +22,20 @@ import tempfile
 import glob
 import shutil
 from contextlib import closing
+from title_keywords import keywords
+
+# Probably a better way to do this
+use_collection_cache = True
+collection_cache = {}
+
+def get_collection_cache(name):
+    global collection_cache
+    if name in collection_cache:
+        return collection_cache[name]
+    
+def set_collection_cache(name, value):
+    global collection_cache
+    collection_cache[name] = value
 
 
 def adjust_space(old_length, display_title):
@@ -239,7 +253,11 @@ def add_to_collection(config_path, plex, method, value, c, plex_map=None, map=No
                 ors = ors + (" OR " if len(ors) > 0 else attr_pair[0] + "(") + str(param)
             output = output + ("\n|\t\t      AND " if len(output) > 0 else "| Processing Plex Search: ") + ors + ")"
         print(output)
-        items = plex.Library.search(**search_terms)
+        title = None
+        if final_method == "title":
+            title = search_terms[final_method][0]
+            del search_terms[final_method]
+        items = plex.Library.search(title, **search_terms)
     elif method == "tvdb_show" and plex.library_type == "show":
         items, missing = imdb_tools.tvdb_get_shows(config_path, plex, plex_map, value)
     elif "imdb" in method or "tmdb" in method:
@@ -285,74 +303,95 @@ def add_to_collection(config_path, plex, method, value, c, plex_map=None, map=No
     }
 
     if items:
-        # Check if already in collection
-        cols = plex.Library.search(title=c, libtype="collection")
-        try:
-            fs = cols[0].children
-        except IndexError:
-            fs = []
+        start = datetime.now()
         item_count = 0
         item_max = len(items)
         max_str_len = len(str(item_max))
         current_length = 0
         for rk in items:
+            elapsed = (datetime.now() - start).total_seconds()
+            if elapsed > 0.:
+                time_each = float(item_count) / elapsed
+                if time_each > 0.:
+                    remaining = timedelta(seconds=float(item_max - item_count) / time_each)
+                    print("Processing item {}/{} remaining: {} ({}s each)".format(item_count, item_max, remaining, time_each))
             current_item = get_item(plex, rk)
             item_count += 1
-            match = True
-            if filters:
-                display_count = (" " * (max_str_len - len(str(item_count)))) + str(item_count)
-                print_display = "| Filtering {}/{} {}".format(display_count, item_max, current_item.title)
-                print(adjust_space(current_length, print_display), end = "\r")
-                current_length = len(print_display)
-                for f in filters:
-                    modifier = f[0][-4:]
-                    method = filter_alias[f[0][:-4]] if modifier in [".not", ".lte", ".gte"] else filter_alias[f[0]]
-                    if method == "max_age":
-                        threshold_date = datetime.now() - timedelta(days=f[1])
-                        attr = getattr(current_item, "originallyAvailableAt")
-                        if attr is None or attr < threshold_date:
-                            match = False
-                            break
-                    elif modifier in [".gte", ".lte"]:
-                        if method == "originallyAvailableAt":
-                            threshold_date = datetime.strptime(f[1], "%m/%d/%y")
-                            attr = getattr(current_item, "originallyAvailableAt")
-                            if (modifier == ".lte" and attr > threshold_date) or (modifier == ".gte" and attr < threshold_date):
-                                match = False
-                                break
-                        elif method in ["year", "rating"]:
-                            attr = getattr(current_item, method)
-                            if (modifier == ".lte" and attr > f[1]) or (modifier == ".gte" and attr < f[1]):
-                                match = False
-                                break
-                    else:
-                        terms = f[1] if isinstance(f[1], list) else str(f[1]).split(", ")
-                        if method in ["video_resolution", "audio_language", "subtitle_language"]:
-                            for media in current_item.media:
-                                if method == "video_resolution":
-                                    attrs = [media.videoResolution]
-                                for part in media.parts:
-                                    if method == "audio_language":
-                                        attrs = ([audio_stream.language for audio_stream in part.audioStreams()])
-                                    if method == "subtitle_language":
-                                        attrs = ([subtitle_stream.language for subtitle_stream in part.subtitleStreams()])
-                        elif method in ["contentRating", "studio", "year", "rating", "originallyAvailableAt"]:                    # Otherwise, it's a string. Make it a list.
-                            attrs = [str(getattr(current_item, method))]
-                        elif method in ["actors", "countries", "directors", "genres", "writers", "collections"]:
-                            attrs = [getattr(x, 'tag') for x in getattr(current_item, method)]
 
-                        # Get the intersection of the user's terms and item's terms
-                        # If it's empty and modifier is not .not, it's not a match
-                        # If it's not empty and modifier is .not, it's not a match
-                        if (not list(set(terms) & set(attrs)) and modifier != ".not") or (list(set(terms) & set(attrs)) and modifier == ".not"):
-                            match = False
-                            break
-            if match:
-                if current_item in fs:
-                    map[current_item.ratingKey] = None
+            cs = [c]
+            # Wildcard. Add to all keywords in title
+            if c.strip() == "*":
+                cs = keywords(current_item.title)
+                print("KEYWORDS FOR: '{}' = {}".format(current_item.title, cs))
+
+            for c2 in cs:
+                # Check if already in collection
+                cached = get_collection_cache(c2)
+                if cached:
+                    fs = cached
+                    print("collection was cached: {}".format(repr(cols)))
                 else:
-                    current_item.addCollection(c)
-                print(adjust_space(current_length, "| {} Collection | {} | {}".format(c, "=" if current_item in fs else "+", current_item.title)))
+                    cols = plex.Library.search(title=c2, libtype="collection")
+                    try:
+                        fs = cols[0].children
+                    except IndexError:
+                        fs = []
+                    set_collection_cache(c2, fs)
+                match = True
+                if filters:
+                    display_count = (" " * (max_str_len - len(str(item_count)))) + str(item_count)
+                    print_display = "| Filtering {}/{} {}".format(display_count, item_max, current_item.title)
+                    print(adjust_space(current_length, print_display), end = "\r")
+                    current_length = len(print_display)
+                    for f in filters:
+                        modifier = f[0][-4:]
+                        method = filter_alias[f[0][:-4]] if modifier in [".not", ".lte", ".gte"] else filter_alias[f[0]]
+                        if method == "max_age":
+                            threshold_date = datetime.now() - timedelta(days=f[1])
+                            attr = getattr(current_item, "originallyAvailableAt")
+                            if attr is None or attr < threshold_date:
+                                match = False
+                                break
+                        elif modifier in [".gte", ".lte"]:
+                            if method == "originallyAvailableAt":
+                                threshold_date = datetime.strptime(f[1], "%m/%d/%y")
+                                attr = getattr(current_item, "originallyAvailableAt")
+                                if (modifier == ".lte" and attr > threshold_date) or (modifier == ".gte" and attr < threshold_date):
+                                    match = False
+                                    break
+                            elif method in ["year", "rating"]:
+                                attr = getattr(current_item, method)
+                                if (modifier == ".lte" and attr > f[1]) or (modifier == ".gte" and attr < f[1]):
+                                    match = False
+                                    break
+                        else:
+                            terms = f[1] if isinstance(f[1], list) else str(f[1]).split(", ")
+                            if method in ["video_resolution", "audio_language", "subtitle_language"]:
+                                for media in current_item.media:
+                                    if method == "video_resolution":
+                                        attrs = [media.videoResolution]
+                                    for part in media.parts:
+                                        if method == "audio_language":
+                                            attrs = ([audio_stream.language for audio_stream in part.audioStreams()])
+                                        if method == "subtitle_language":
+                                            attrs = ([subtitle_stream.language for subtitle_stream in part.subtitleStreams()])
+                            elif method in ["contentRating", "studio", "year", "rating", "originallyAvailableAt"]:                    # Otherwise, it's a string. Make it a list.
+                                attrs = [str(getattr(current_item, method))]
+                            elif method in ["actors", "countries", "directors", "genres", "writers", "collections"]:
+                                attrs = [getattr(x, 'tag') for x in getattr(current_item, method)]
+
+                            # Get the intersection of the user's terms and item's terms
+                            # If it's empty and modifier is not .not, it's not a match
+                            # If it's not empty and modifier is .not, it's not a match
+                            if (not list(set(terms) & set(attrs)) and modifier != ".not") or (list(set(terms) & set(attrs)) and modifier == ".not"):
+                                match = False
+                                break
+                if match:
+                    if current_item in fs:
+                        map[current_item.ratingKey] = None
+                    else:
+                        current_item.addCollection(c2)
+                    print(adjust_space(current_length, "| {} Collection | {} | {}".format(c2, "=" if current_item in fs else "+", current_item.title)))
         print(adjust_space(current_length, "| Processed {} {}".format(item_max, "Movies" if plex.library_type == "movie" else "Shows")))
     else:
         print("| No {} Found".format("Movies" if plex.library_type == "movie" else "Shows"))
