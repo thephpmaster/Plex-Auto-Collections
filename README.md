@@ -113,10 +113,12 @@ A simple `Dockerfile` is available in this repo if you'd like to build it yourse
 The docker implementation today is limited but will improve over time. To use, try the following:
 
 ```shell
-docker run --rm -v '/mnt/user/plex-auto-collections/':'/config':'rw' 'mza921/plex-auto-collections' -u
+docker run --rm -v '/mnt/user/plex-auto-collections/':'/config':'rw' --net host 'mza921/plex-auto-collections' -u
 ```
 
 The `-v '/mnt/user/plex-auto-collections/':'/config'` mounts a persistent volume to store your config file. Today, the docker image defaults to running the config named `config.yml` in your persistent volume (eventually, the docker will support an environment variable to change the config path).
+
+`--net host` allows network access to localhost instead of putting the container inside docker networking.
 
 Lastly, you may need to run the docker with `-it` and without `-u` in order to interact with the script. For example, if you'd like to use Trakt lists, you need to go through the OAuth flow and interact with the script at first-run. After that, you should be able to run it without the `-it` flag.
 
@@ -152,6 +154,36 @@ Each collection is defined by the mapping name which becomes the name of the Ple
 - [Poster (optional)](#poster-collection-attribute)
 - [Background (optional)](#background-collection-attribute)
 - [Name Mapping (optional)](#name-mapping-collection-attribute)
+
+### Collection Name
+If the collection name is wildcard `*`, the title of each video will be split and it will be added to each collection. Here are some examples:
+
+```yaml
+# Go through all videos and add them to any collections by keywords in the title
+collections:
+  "*":
+    all: true
+```
+
+
+| Title                                           | Collections                                      |
+| ----------------------------------------------- | ------------------------------------------------ |
+| The Land Before Time                            | Land Before Time                                 |
+| Toy Story 3                                     | Toy, Story                                       |
+| Toy Story 2                                     | Toy, Story                                       |
+| Toy Story 1                                     | Toy, Story                                       |
+| Harry Potter and the Deathly Hallows: Part 1    | Deathly, Harry, Hallows, Potter                  |
+| Harry Potter and the Philosopher's Stone        | Stone, Harry, Philosopher, Potter                |
+| Harry Potter and the Order of the Phoenix       | Order, Phoenix, Harry, Potter                    |
+| Alice in Wonderland                             | Alice, Wonderland                                |
+| Star Wars: Episode I - The Phantom Menace       | Phantom, Episode, Wars, Menace, Star             |
+| Jurassic Park                                   | Jurassic, Park                                   |
+| The Land Before Time                            | Land, Time                                       |
+| Pirates of the Caribbean: On Stranger Tides     | Tides, Pirates, Caribbean, Stranger              |
+| Pirates of the Caribbean: Dead Man's Chest      | Man, Dead, Pirates, Caribbean, Chest             |
+| Pirates of the Caribbean: At World's End        | World, Pirates, Caribbean, End                   |
+
+
 
 ### List Type (Collection Attribute)
 
@@ -195,6 +227,7 @@ You can create a collection based on the Plex search feature using the `plex_sea
 
 | Search Option | Description | Movie<br>Libraries | Show<br>Libraries |
 | :-- | :-- | :--: | :--: |
+| `title` | Gets every movie the search term in the title | :heavy_check_mark: | :x: |
 | `actor` | Gets every movie with the specified actor | :heavy_check_mark: | :x: |
 | `tmdb_actor` | Gets every movie with the specified actor as well as the added TMDb [metadata](#tmdb-people-list-type) | :heavy_check_mark: | :x: |
 | `country` | Gets every movie with the specified country | :heavy_check_mark: | :x: |
@@ -214,6 +247,12 @@ collections:
   Documentaries:
     plex_search:
       genre: Documentary
+```
+```yaml
+collections:
+  Hunger Games:
+    plex_search:
+      title: Hunger Games
 ```
 ```yaml
 collections:

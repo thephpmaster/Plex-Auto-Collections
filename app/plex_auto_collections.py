@@ -193,6 +193,7 @@ def update_from_config(config_path, plex, headless=False, no_meta=False, no_imag
         "studio", #"studio.not",
         "year", #"year.not",
         "writer", #"writer.not",
+        "title",
         "tmdb_actor", "tmdb_director", "tmdb_writer"
     ]
     show_only_lists = [
@@ -553,6 +554,7 @@ def update_from_config(config_path, plex, headless=False, no_meta=False, no_imag
                                 else:
                                     print("| Config Error: {} plex search attribute not supported".format(search_attr))
                             methods.append((method_name, [search]))
+                            print("METHOS: {}, search: {}".format(methods, search))
                         elif method_name == "tmdb_discover":
                             new_dictionary = {"limit": 100}
                             for attr in collections[c][m]:
